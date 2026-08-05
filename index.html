@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Кіноразом 🎬 — дивимось відео разом</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+<style>
+  :root{
+    --bg1:#0d0a1f; --bg2:#1a1035; --accent:#ff5ec4; --accent2:#7b61ff;
+    --green:#2ee6a8; --red:#ff5f7a; --text:#f0edff; --muted:#a49fc9;
+    --card:rgba(255,255,255,.06); --border:rgba(255,255,255,.12);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    background:radial-gradient(1200px 800px at 20% -10%,var(--bg2),transparent),radial-gradient(1000px 700px at 110% 110%,#2a1245,transparent),var(--bg1);
+    color:var(--text); min-height:100vh;
+  }
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 0 14px}
+  h1{font-size:22px;font-weight:800;letter-spacing:.5px}
+  h1 span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .room{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:8px 12px;font-size:14px}
+  .room b{color:var(--green);letter-spacing:2px}
+  button{font:inherit;cursor:pointer;border:none;border-radius:10px;background:linear-gradient(90deg,var(--accent),var(--accent2));color:#fff;padding:8px 14px;font-weight:700;transition:transform .12s, filter .12s}
+  button:hover{filter:brightness(1.12)}
+  button:active{transform:scale(.96)}
+  button.ghost{background:var(--card);border:1px solid var(--border);color:var(--text)}
+  .layout{display:grid;grid-template-columns:1fr 320px;gap:16px}
+  @media(max-width:860px){.layout{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;backdrop-filter:blur(6px)}
+  .stage{position:relative;aspect-ratio:16/9;background:#000;border-radius:14px;overflow:hidden}
+  #player{width:100%;height:100%}
+  .stage .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:var(--muted);font-size:15px;line-height:1.6;z-index:2;background:radial-gradient(circle at 50% 40%,#14102b,#000 75%)}
+  .reacts{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3}
+  .react{position:absolute;font-size:34px;animation:float 1.6s ease-out forwards}
+  @keyframes float{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:1}100%{transform:translateY(-260px) scale(1.4);opacity:0}}
+  .row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  input[type=text]{flex:1;min-width:160px;font:inherit;background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:9px 12px;outline:none}
+  input[type=text]:focus{border-color:var(--accent)}
+  .pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center;min-height:28px}
+  .pill{background:var(--card);border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:13px;color:var(--muted)}
+  .pill.host{border-color:var(--green);color:var(--green)}
+  .pill.you{color:#fff;border-color:var(--accent)}
+  .emoji{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+  .emoji button{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:6px 10px;font-size:20px}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin:0 0 8px}
+  .chat{display:flex;flex-direction:column;min-height:420px}
+  .chatlog{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px;max-height:340px}
+  .m{background:rgba(0,0,0,.25);border-radius:10px;padding:7px 10px;font-size:14px;line-height:1.4}
+  .m b{color:var(--accent2)}
+  .m .t{color:var(--muted);font-size:11px;float:right;margin-left:8px;margin-top:2px}
+  .m.sys{background:transparent;color:var(--muted);font-size:12px;text-align:center;padding:2px}
+  .chat input{margin-top:8px}
+  .queue{list-style:none;margin-top:8px;display:flex;flex-direction:column;gap:6px}
+  .queue li{background:rgba(0,0,0,.25);border-radius:10px;padding:8px 10px;font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:background .15s}
+  .queue li:hover{background:rgba(0,0,0,.45)}
+  .queue li .del{margin-left:auto;cursor:pointer;color:var(--red);font-weight:800;padding:0 4px}
+  .queue li.now{border:1px solid var(--green)}
+  .status{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+  .status b{color:var(--text)}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);border:1px solid var(--border);border-radius:12px;padding:10px 18px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎬 <span>Кіноразом</span></h1>
+    <div class="room">Кімната: <b id="roomCode">…</b> <button class="ghost" id="copyBtn" title="Скопіювати лінк">🔗 Лінк</button></div>
+  </header>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <div class="stage">
+          <div id="player"></div>
+          <div class="msg" id="playerMsg">🔗 Встав посилання на YouTube-відео нижче<br>і натисни «Дивитись зараз» — друзі підхоплять автоматично</div>
+          <div class="reacts" id="reacts"></div>
+        </div>
+        <div class="row">
+          <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=… або youtu.be/…" autocomplete="off">
+          <button id="loadBtn">▶ Дивитись зараз</button>
+          <button class="ghost" id="queueBtn">➕ У чергу</button>
+        </div>
+        <div class="pills" id="pills"><span class="pill">Учасники:</span></div>
+        <div class="emoji">
+          <button data-e="😂">😂</button><button data-e="🔥">🔥</button><button data-e="❤️">❤️</button>
+          <button data-e="🎉">🎉</button><button data-e="👏">👏</button><button data-e="😱">😱</button>
+        </div>
+        <div class="status" id="status">Запускаємось…</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card chat">
+        <h3>💬 Чат</h3>
+        <div class="chatlog" id="chatlog"></div>
+        <input type="text" id="chatInput" placeholder="Написати в чат…" autocomplete="off">
+        <h3 style="margin-top:14px">🎞 Черга</h3>
+        <ul class="queue" id="queue"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+'use strict';
+/* ================= Стан ================= */
+const hashMatch = location.hash.match(/room=([A-Z0-9]+)/i);
+const ROOM = (hashMatch && hashMatch[1]) || genCode();
+const HAD_HASH = !!hashMatch;
+const WAS_HOST = localStorage.getItem('kp_host_' + ROOM) === '1';
+let myName = (localStorage.getItem('kp_name') || '').trim();
+while(!myName){ myName = prompt('Як тебе звати?'); myName = myName ? myName.trim().slice(0,24) : ''; }
+localStorage.setItem('kp_name', myName);
+
+let role = null;              // 'host' | 'guest'
+let peer = null, conn = null; // guest: conn
+let hostConns = new Map();    // host: peerId -> conn (з _name)
+let myPeerId = null;
+let player = null, playerReady = false, ytReady = false;
+let videoId = null, playing = false, queue = [], tickTimer = null;
+let pendingVideoId = null, pendingPlaying = false, pendingT = 0;
+
+/* ================= Допоміжне ================= */
+function genCode(){ let s=''; const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; for(let i=0;i<5;i++) s+=A[Math.floor(Math.random()*A.length)]; return s; }
+function setHash(code){ history.replaceState(null,'','#room='+code); }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2600); }
+function setStatus(html){ document.getElementById('status').innerHTML=html; }
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function parseYT(url){
+  if(!url) return null;
+  const m = String(url).match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+  return m ? m[1] : null;
+}
+function send(obj){
+  if(!obj) return;
+  if(role === 'host'){ for(const c of hostConns.values()){ try{ c.send(obj); }catch(e){} } }
+  else { try{ conn && conn.send(obj); }catch(e){} }
+}
+function participantsNames(){
+  const names = [myName];
+  if(role === 'host'){ for(const c of hostConns.values()) if(c._name) names.push(c._name); }
+  return names;
+}
+
+/* ================= YouTube плеєр ================= */
+function onYouTubeIframeAPIReady(){ ytReady = true; createPlayer(); }
+function createPlayer(){
+  if(player) return;
+  player = new YT.Player('player', {
+    width:'100%', height:'100%',
+    playerVars:{ autoplay:1, rel:0 },
+    events:{
+      onReady: () => { playerReady = true; flushPending(); },
+      onStateChange: e => {
+        const s = e.data;
+        if(s === YT.PlayerState.PLAYING){ playing = true; hideMsg(); if(role==='host'){ send({type:'play'}); startTick(); } }
+        else if(s === YT.PlayerState.PAUSED){ playing = false; if(role==='host'){ send({type:'pause'}); stopTick(); } }
+        else if(s === YT.PlayerState.ENDED){ if(role==='host'){ stopTick(); nextInQueue(); } }
+      },
+      onError: () => toast('⚠️ Помилка відео — перевір посилання')
+    }
+  });
+}
+function hideMsg(){ document.getElementById('playerMsg').style.display='none'; }
+function loadVideo(id, autoplay){
+  videoId = id;
+  if(playerReady){ player.loadVideoById({videoId:id, startSeconds:0}); if(!autoplay) player.pauseVideo(); hideMsg(); renderQueue(); }
+}
+function flushPending(){
+  if(!playerReady) return;
+  if(pendingVideoId){ loadVideo(pendingVideoId, pendingPlaying); if(pendingPlaying && pendingT>1) player.seekTo(pendingT, true); pendingVideoId=null; pendingPlaying=false; pendingT=0; }
+}
+function startTick(){
+  stopTick();
+  tickTimer = setInterval(()=>{
+    if(playerReady && player.getPlayerState() === YT.PlayerState.PLAYING){
+      send({type:'tick', t: player.getCurrentTime(), ts: Date.now()});
+    }
+  }, 3000);
+}
+function stopTick(){ if(tickTimer){ clearInterval(tickTimer); tickTimer=null; } }
+
+/* ================= Хост ================= */
+function becomeHost(){
+  role = 'host';
+  localStorage.setItem('kp_host_' + ROOM, '1');
+  setHash(ROOM);
+  document.getElementById('roomCode').textContent = ROOM;
+  setStatus('🟢 Ти хост кімнати <b>'+ROOM+'</b>. Скинь друзям лінк — підключаться сюди.');
+  peer = new Peer(ROOM, {debug:0});
+  peer.on('open', id=>{
+    myPeerId = id;
+    renderPills(participantsNames());
+  });
+  peer.on('connection', c=>{
+    c.on('open', ()=>{
+      hostConns.set(c.peer, c);
+      c.send({type:'welcome', state:{videoId, playing, t: (playerReady && videoId) ? player.getCurrentTime() : 0}, queue, names:participantsNames()});
+      broadcastParticipants();
+      sysMsg('➕ Приєднався учасник');
+    });
+    c.on('data', d=>{
+      if(!d || !d.type) return;
+      switch(d.type){
+        case 'hello':
+          hostConns.get(c.peer)._name = d.name;
+          broadcastParticipants();
+          sysMsg('👋 ' + esc(d.name) + ' у кімнаті');
+          break;
+        case 'load':
+          if(d.videoId){ loadVideo(d.videoId, true); send({type:'load', videoId:d.videoId}); }
+          break;
+        case 'play': if(playerReady && videoId){ player.playVideo(); send({type:'play'}); } break;
+        case 'pause': if(playerReady && videoId){ player.pauseVideo(); send({type:'pause'}); } break;
+        case 'seek': if(playerReady && videoId){ player.seekTo(d.t, true); send({type:'seek', t:d.t}); } break;
+        case 'chat': send({type:'chat', name:d.name, text:d.text}); addChat(d.name, d.text); break;
+        case 'react': send({type:'react', e:d.e}); spawnReact(d.e); break;
+        case 'queue_add':
+          queue.push({id:d.videoId, title:d.title || 'Відео', name:d.name});
+          renderQueue(); broadcastQueue();
+          sysMsg('🎞 ' + esc(d.name) + ' додав у чергу: ' + esc(d.title || 'Відео'));
+          break;
+        case 'queue_remove': if(d.idx>=0 && d.idx<queue.length){ queue.splice(d.idx,1); renderQueue(); broadcastQueue(); } break;
+      }
+    });
+    c.on('close', ()=>{ hostConns.delete(c.peer); broadcastParticipants(); sysMsg('➖ Учасник вийшов'); });
+  });
+  peer.on('error', err=>{
+    if(err.type === 'unavailable-id'){
+      // ID зайнятий (хтось інший створив кімнату раніше) → стаємо гостем
+      if(peer) peer.destroy();
+      becomeGuest();
+    } else {
+      setStatus('❌ Помилка: ' + err.type + ' — онови сторінку або спробуй інший браузер.');
+    }
+  });
+}
+function broadcastParticipants(){ send({type:'participants', names:participantsNames()}); renderPills(participantsNames()); }
+function broadcastQueue(){ send({type:'queue_update', queue}); }
+
+/* ================= Гість ================= */
+function becomeGuest(){
+  role = 'guest';
+  document.getElementById('roomCode').textContent = ROOM;
+  setStatus('🟡 Підключаємось до кімнати <b>'+ROOM+'</b>…');
+  peer = new Peer({debug:0});
+  peer.on('open', id=>{
+    myPeerId = id;
+    conn = peer.connect(ROOM, {reliable:true});
+    conn.on('open', ()=>{ setStatus("🟢 З'єднано з кімнатою <b>"+ROOM+"</b>"); conn.send({type:'hello', name:myName}); });
+    conn.on('data', d=>{
+      if(!d || !d.type) return;
+      switch(d.type){
+        case 'welcome':
+          queue = d.queue || []; renderQueue();
+          if(d.names && d.names.length){ const all = d.names.includes(myName) ? d.names : [...d.names, myName]; renderPills(all); }
+          if(d.state && d.state.videoId){
+            if(playerReady){ loadVideo(d.state.videoId, !!d.state.playing); if(d.state.playing && d.state.t>1) player.seekTo(d.state.t, true); }
+            else { pendingVideoId = d.state.videoId; pendingPlaying = !!d.state.playing; pendingT = d.state.t||0; }
+          }
+          break;
+        case 'load':
+          if(playerReady){ loadVideo(d.videoId, true); }
+          else { pendingVideoId = d.videoId; pendingPlaying = true; pendingT = 0; }
+          break;
+        case 'play': if(playerReady && videoId) player.playVideo(); break;
+        case 'pause': if(playerReady && videoId) player.pauseVideo(); break;
+        case 'seek': if(playerReady && videoId) player.seekTo(d.t, true); break;
+        case 'tick':
+          if(playerReady && videoId && player.getPlayerState() === YT.PlayerState.PLAYING){
+            const expected = d.t + (Date.now() - d.ts)/1000;
+            const cur = player.getCurrentTime();
+            if(Math.abs(cur - expected) > 1.5) player.seekTo(expected, true);
+          }
+          break;
+        case 'chat': addChat(d.name, d.text); break;
+        case 'react': spawnReact(d.e); break;
+        case 'queue_update': queue = d.queue || []; renderQueue(); break;
+        case 'participants': renderPills(d.names); break;
+      }
+    });
+    conn.on('close', ()=>{ setStatus("🔴 Хост вийшов або з'єднання впало. Кімната закрита — попроси створити нову."); });
+    conn.on('error', ()=>{ setStatus("🔴 Не вдалося з'єднатись. Перевір лінк."); });
+  });
+  peer.on('error', err=>{
+    if(err.type === 'peer-unavailable'){
+      // Хоста немає (він вийшов) — можемо стати хостом цієї кімнати
+      if(peer) peer.destroy();
+      sysMsg('Хоста немає в мережі — ти стаєш хостом цієї кімнати.');
+      becomeHost();
+    } else {
+      setStatus('❌ Помилка: ' + err.type);
+    }
+  });
+}
+
+/* ================= Учасники / пігулки ================= */
+function renderPills(names){
+  const box = document.getElementById('pills');
+  box.innerHTML = '<span class="pill">Учасники:</span>';
+  names.forEach((n,i)=>{
+    const p = document.createElement('span');
+    p.className = 'pill' + (n===myName ? ' you' : '') + (i===0 ? ' host' : '');
+    p.textContent = n + (n===myName ? ' (ти)' : '');
+    box.appendChild(p);
+  });
+}
+
+/* ================= Чат ================= */
+function addChat(name, text){
+  const box = document.getElementById('chatlog');
+  const m = document.createElement('div'); m.className='m';
+  const t = new Date().toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit'});
+  m.innerHTML = '<b>'+esc(name)+'</b><span class="t">'+t+'</span><div>'+esc(text)+'</div>';
+  box.appendChild(m); box.scrollTop = box.scrollHeight;
+}
+function sysMsg(text){
+  const box = document.getElementById('chatlog');
+  const m = document.createElement('div'); m.className='m sys'; m.textContent = text;
+  box.appendChild(m); box.scrollTop = box.scrollHeight;
+}
+
+/* ================= Реакції ================= */
+function spawnReact(e){
+  const box = document.getElementById('reacts');
+  const r = document.createElement('div'); r.className='react'; r.textContent = e;
+  r.style.left = (15+Math.random()*70)+'%';
+  r.style.top = (20+Math.random()*45)+'%';
+  box.appendChild(r);
+  setTimeout(()=>r.remove(), 1700);
+}
+
+/* ================= Черга ================= */
+function renderQueue(){
+  const ul = document.getElementById('queue');
+  ul.innerHTML='';
+  if(!queue.length){ const li=document.createElement('li'); li.textContent='Черга порожня — додай відео 🍿'; li.style.cursor='default'; ul.appendChild(li); return; }
+  queue.forEach((q,i)=>{
+    const li = document.createElement('li');
+    const isNow = q.id === videoId;
+    if(isNow) li.className = 'now';
+    li.innerHTML = '<span>'+(isNow?'▶ ':'')+esc(q.title || 'Відео')+'</span><span class="del" data-i="'+i+'">✕</span>';
+    li.onclick = ()=>{ if(role==='host' && !isNow){ loadVideo(q.id, true); send({type:'load', videoId:q.id}); } };
+    li.querySelector('.del').onclick = (e)=>{
+      e.stopPropagation();
+      if(role==='host'){ queue.splice(i,1); renderQueue(); broadcastQueue(); }
+      else { send({type:'queue_remove', idx:i}); }
+    };
+    ul.appendChild(li);
+  });
+}
+function nextInQueue(){
+  const cur = queue.findIndex(q => q.id === videoId);
+  const next = cur >= 0 ? cur+1 : 0;
+  if(queue[next]){ loadVideo(queue[next].id, true); send({type:'load', videoId:queue[next].id}); }
+}
+
+/* ================= UI ================= */
+document.getElementById('roomCode').textContent = ROOM;
+document.getElementById('copyBtn').onclick = ()=>{
+  const url = location.origin + location.pathname + '#room=' + ROOM;
+  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+    .then(()=>toast('🔗 Лінк скопійовано: ' + url))
+    .catch(()=>{ prompt('Скопіюй лінк:', url); });
+};
+function currentVideoId(){ return parseYT(document.getElementById('videoUrl').value); }
+document.getElementById('loadBtn').onclick = ()=>{
+  const id = currentVideoId();
+  if(!id){ toast('⚠️ Не розпізнав лінк. Треба YouTube (watch?v= або youtu.be)'); return; }
+  document.getElementById('videoUrl').value='';
+  if(role==='host'){ loadVideo(id, true); send({type:'load', videoId:id}); }
+  else { send({type:'load', videoId:id}); }
+};
+document.getElementById('queueBtn').onclick = ()=>{
+  const id = currentVideoId();
+  if(!id){ toast('⚠️ Не розпізнав лінк. Треба YouTube (watch?v= або youtu.be)'); return; }
+  const title = (prompt('Назва для черги (необов\u2019язково):') || '').trim() || 'Відео';
+  document.getElementById('videoUrl').value='';
+  if(role==='host'){ queue.push({id, title, name:myName}); renderQueue(); broadcastQueue(); }
+  else { send({type:'queue_add', videoId:id, title, name:myName}); }
+};
+document.querySelectorAll('.emoji button').forEach(b=>{
+  b.onclick = ()=>{ const e=b.dataset.e; send({type:'react', e}); spawnReact(e); };
+});
+document.getElementById('chatInput').addEventListener('keydown', e=>{
+  if(e.key==='Enter' && e.target.value.trim()){
+    const text = e.target.value.trim().slice(0,300);
+    send({type:'chat', name:myName, text});
+    addChat(myName, text);
+    e.target.value='';
+  }
+});
+document.getElementById('videoUrl').addEventListener('keydown', e=>{
+  if(e.key==='Enter') document.getElementById('loadBtn').click();
+});
+
+/* ================= Старт ================= */
+if(!HAD_HASH){ becomeHost(); }
+else if(WAS_HOST){ becomeHost(); }
+else { becomeGuest(); }
+</script>
+</body>
+</html>
