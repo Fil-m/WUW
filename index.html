@@ -31,7 +31,8 @@
   @media(max-width:860px){.layout{grid-template-columns:1fr}}
   .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;backdrop-filter:blur(6px)}
   .stage{position:relative;aspect-ratio:16/9;background:#000;border-radius:14px;overflow:hidden}
-  #player{width:100%;height:100%}
+  #player{position:absolute;inset:0;width:100%;height:100%;display:none}
+  #vplayer{position:absolute;inset:0;width:100%;height:100%;display:none;background:#000}
   .stage .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:var(--muted);font-size:15px;line-height:1.6;z-index:2;background:radial-gradient(circle at 50% 40%,#14102b,#000 75%)}
   .reacts{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3}
   .react{position:absolute;font-size:34px;animation:float 1.6s ease-out forwards}
@@ -76,11 +77,12 @@
       <div class="card">
         <div class="stage">
           <div id="player"></div>
-          <div class="msg" id="playerMsg">🔗 Встав посилання на YouTube-відео нижче<br>і натисни «Дивитись зараз» — друзі підхоплять автоматично</div>
+          <video id="vplayer" playsinline></video>
+          <div class="msg" id="playerMsg">🔗 Встав посилання нижче<br>YouTube або пряме відео (.mp4 / .m3u8) — друзі підхоплять автоматично</div>
           <div class="reacts" id="reacts"></div>
         </div>
         <div class="row">
-          <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=… або youtu.be/…" autocomplete="off">
+          <input type="text" id="videoUrl" placeholder="YouTube або пряме посилання на .mp4/.m3u8" autocomplete="off">
           <button id="loadBtn">▶ Дивитись зараз</button>
           <button class="ghost" id="queueBtn">➕ У чергу</button>
         </div>
@@ -108,6 +110,7 @@
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
 <script>
 'use strict';
 /* ================= Стан ================= */
@@ -124,8 +127,13 @@ let peer = null, conn = null; // guest: conn
 let hostConns = new Map();    // host: peerId -> conn (з _name)
 let myPeerId = null;
 let player = null, playerReady = false, ytReady = false;
-let videoId = null, playing = false, queue = [], tickTimer = null;
-let pendingVideoId = null, pendingPlaying = false, pendingT = 0;
+let vPlayer = null, hls = null;
+let mediaMode = null;         // 'yt' | 'file' | null
+let currentMedia = null;      // {kind, id} | {kind, src, title}
+let playing = false, queue = [], tickTimer = null;
+let pendingMedia = null;      // {kind, id, src, title, playing, t}
+
+const vPlayerEl = document.getElementById('vplayer');
 
 /* ================= Допоміжне ================= */
 function genCode(){ let s=''; const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; for(let i=0;i<5;i++) s+=A[Math.floor(Math.random()*A.length)]; return s; }
@@ -133,11 +141,6 @@ function setHash(code){ history.replaceState(null,'','#room='+code); }
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2600); }
 function setStatus(html){ document.getElementById('status').innerHTML=html; }
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function parseYT(url){
-  if(!url) return null;
-  const m = String(url).match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
-  return m ? m[1] : null;
-}
 function send(obj){
   if(!obj) return;
   if(role === 'host'){ for(const c of hostConns.values()){ try{ c.send(obj); }catch(e){} } }
@@ -149,6 +152,89 @@ function participantsNames(){
   return names;
 }
 
+/* ================= Розпізнавання посилань ================= */
+function parseMedia(url){
+  if(!url) return null;
+  const s = String(url).trim();
+  const yt = s.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+  if(yt) return {kind:'yt', id:yt[1]};
+  if(/\.(mp4|webm|ogg|ogv|m4v)(\?|#|$)/i.test(s) || s.includes('.m3u8')){
+    const title = decodeURIComponent(s.split('/').pop().split(/[?#]/)[0] || 'Відео').replace(/\.[^.]+$/, '') || 'Відео';
+    return {kind:'file', src:s, title:title.slice(0,60)};
+  }
+  return null;
+}
+
+/* ================= Медіа-абстракція ================= */
+function showPlayer(kind){
+  document.getElementById('playerMsg').style.display = 'none';
+  if(kind === 'yt'){ document.getElementById('player').style.display = 'block'; vPlayerEl.style.display = 'none'; }
+  else if(kind === 'file'){ document.getElementById('player').style.display = 'none'; vPlayerEl.style.display = 'block'; }
+}
+function resetFilePlayer(){
+  if(hls){ try{ hls.destroy(); }catch(e){} hls = null; }
+  vPlayerEl.pause();
+  vPlayerEl.removeAttribute('src');
+  vPlayerEl.load();
+}
+function destroyFileHls(){ if(hls){ try{ hls.destroy(); }catch(e){} hls = null; } }
+function mediaCurTime(){
+  if(mediaMode === 'yt') return player && playerReady ? player.getCurrentTime() : 0;
+  if(mediaMode === 'file') return isFinite(vPlayerEl.currentTime) ? vPlayerEl.currentTime : 0;
+  return 0;
+}
+function mediaSeekTo(t){
+  if(mediaMode === 'yt' && playerReady) player.seekTo(t, true);
+  else if(mediaMode === 'file'){ try{ vPlayerEl.currentTime = t; }catch(e){} }
+}
+function mediaPlay(){
+  if(mediaMode === 'yt' && playerReady){ player.playVideo(); return; }
+  if(mediaMode === 'file'){
+    const p = vPlayerEl.play();
+    if(p && p.catch) p.catch(()=>{ vPlayerEl.muted = true; vPlayerEl.play().catch(()=>{}); toast('🔊 Натисни ▶ на відео, щоб увімкнути звук'); });
+  }
+}
+function mediaPause(){
+  if(mediaMode === 'yt' && playerReady) player.pauseVideo();
+  else if(mediaMode === 'file') vPlayerEl.pause();
+}
+function mediaIsPlaying(){
+  if(mediaMode === 'yt') return playerReady && player.getPlayerState() === YT.PlayerState.PLAYING;
+  if(mediaMode === 'file') return !vPlayerEl.paused && !vPlayerEl.ended;
+  return false;
+}
+
+function loadMedia(media, autoplay){
+  currentMedia = media;
+  if(media.kind === 'yt'){
+    mediaMode = 'yt';
+    showPlayer('yt');
+    resetFilePlayer();
+    if(playerReady){ player.loadVideoById({videoId:media.id, startSeconds:0}); if(!autoplay) player.pauseVideo(); }
+  } else {
+    mediaMode = 'file';
+    showPlayer('file');
+    destroyFileHls();
+    if(media.src.includes('.m3u8') && window.Hls && Hls.isSupported()){
+      hls = new Hls();
+      hls.loadSource(media.src);
+      hls.attachMedia(vPlayerEl);
+    } else {
+      vPlayerEl.src = media.src;
+    }
+    vPlayerEl.load();
+    if(autoplay) mediaPlay();
+  }
+  renderQueue();
+}
+function applyPending(){
+  if(!pendingMedia) return;
+  const p = pendingMedia; pendingMedia = null;
+  if(p.kind === 'yt' && !playerReady) return;
+  loadMedia({kind:p.kind, id:p.id, src:p.src, title:p.title}, p.playing);
+  if(p.playing && p.t > 1) mediaSeekTo(p.t);
+}
+
 /* ================= YouTube плеєр ================= */
 function onYouTubeIframeAPIReady(){ ytReady = true; createPlayer(); }
 function createPlayer(){
@@ -157,10 +243,10 @@ function createPlayer(){
     width:'100%', height:'100%',
     playerVars:{ autoplay:1, rel:0 },
     events:{
-      onReady: () => { playerReady = true; flushPending(); },
+      onReady: () => { playerReady = true; applyPending(); },
       onStateChange: e => {
         const s = e.data;
-        if(s === YT.PlayerState.PLAYING){ playing = true; hideMsg(); if(role==='host'){ send({type:'play'}); startTick(); } }
+        if(s === YT.PlayerState.PLAYING){ playing = true; if(role==='host'){ send({type:'play'}); startTick(); } }
         else if(s === YT.PlayerState.PAUSED){ playing = false; if(role==='host'){ send({type:'pause'}); stopTick(); } }
         else if(s === YT.PlayerState.ENDED){ if(role==='host'){ stopTick(); nextInQueue(); } }
       },
@@ -168,21 +254,19 @@ function createPlayer(){
     }
   });
 }
-function hideMsg(){ document.getElementById('playerMsg').style.display='none'; }
-function loadVideo(id, autoplay){
-  videoId = id;
-  if(playerReady){ player.loadVideoById({videoId:id, startSeconds:0}); if(!autoplay) player.pauseVideo(); hideMsg(); renderQueue(); }
-}
-function flushPending(){
-  if(!playerReady) return;
-  if(pendingVideoId){ loadVideo(pendingVideoId, pendingPlaying); if(pendingPlaying && pendingT>1) player.seekTo(pendingT, true); pendingVideoId=null; pendingPlaying=false; pendingT=0; }
-}
+
+/* ================= Video-плеєр (mp4/m3u8) ================= */
+vPlayer = vPlayerEl;
+vPlayerEl.addEventListener('play', ()=>{ playing = true; if(role==='host'){ send({type:'play'}); startTick(); } });
+vPlayerEl.addEventListener('pause', ()=>{ playing = false; if(role==='host'){ send({type:'pause'}); stopTick(); } });
+vPlayerEl.addEventListener('ended', ()=>{ if(role==='host'){ stopTick(); nextInQueue(); } });
+vPlayerEl.addEventListener('error', ()=>{ if(mediaMode==='file') toast('⚠️ Не вдалося завантажити відео за посиланням'); });
+
+/* ================= Такт синхронізації ================= */
 function startTick(){
   stopTick();
   tickTimer = setInterval(()=>{
-    if(playerReady && player.getPlayerState() === YT.PlayerState.PLAYING){
-      send({type:'tick', t: player.getCurrentTime(), ts: Date.now()});
-    }
+    if(mediaIsPlaying()) send({type:'tick', t: mediaCurTime(), ts: Date.now()});
   }, 3000);
 }
 function stopTick(){ if(tickTimer){ clearInterval(tickTimer); tickTimer=null; } }
@@ -202,7 +286,7 @@ function becomeHost(){
   peer.on('connection', c=>{
     c.on('open', ()=>{
       hostConns.set(c.peer, c);
-      c.send({type:'welcome', state:{videoId, playing, t: (playerReady && videoId) ? player.getCurrentTime() : 0}, queue, names:participantsNames()});
+      c.send({type:'welcome', state:{media: currentMedia, playing, t: currentMedia ? mediaCurTime() : 0}, queue, names:participantsNames()});
       broadcastParticipants();
       sysMsg('➕ Приєднався учасник');
     });
@@ -215,15 +299,15 @@ function becomeHost(){
           sysMsg('👋 ' + esc(d.name) + ' у кімнаті');
           break;
         case 'load':
-          if(d.videoId){ loadVideo(d.videoId, true); send({type:'load', videoId:d.videoId}); }
+          if(d.media){ loadMedia(d.media, true); send({type:'load', media:d.media}); }
           break;
-        case 'play': if(playerReady && videoId){ player.playVideo(); send({type:'play'}); } break;
-        case 'pause': if(playerReady && videoId){ player.pauseVideo(); send({type:'pause'}); } break;
-        case 'seek': if(playerReady && videoId){ player.seekTo(d.t, true); send({type:'seek', t:d.t}); } break;
+        case 'play': if(currentMedia){ mediaPlay(); send({type:'play'}); } break;
+        case 'pause': if(currentMedia){ mediaPause(); send({type:'pause'}); } break;
+        case 'seek': if(currentMedia){ mediaSeekTo(d.t); send({type:'seek', t:d.t}); } break;
         case 'chat': send({type:'chat', name:d.name, text:d.text}); addChat(d.name, d.text); break;
         case 'react': send({type:'react', e:d.e}); spawnReact(d.e); break;
         case 'queue_add':
-          queue.push({id:d.videoId, title:d.title || 'Відео', name:d.name});
+          queue.push({media:d.media, title:d.title || 'Відео', name:d.name});
           renderQueue(); broadcastQueue();
           sysMsg('🎞 ' + esc(d.name) + ' додав у чергу: ' + esc(d.title || 'Відео'));
           break;
@@ -234,7 +318,6 @@ function becomeHost(){
   });
   peer.on('error', err=>{
     if(err.type === 'unavailable-id'){
-      // ID зайнятий (хтось інший створив кімнату раніше) → стаємо гостем
       if(peer) peer.destroy();
       becomeGuest();
     } else {
@@ -261,23 +344,25 @@ function becomeGuest(){
         case 'welcome':
           queue = d.queue || []; renderQueue();
           if(d.names && d.names.length){ const all = d.names.includes(myName) ? d.names : [...d.names, myName]; renderPills(all); }
-          if(d.state && d.state.videoId){
-            if(playerReady){ loadVideo(d.state.videoId, !!d.state.playing); if(d.state.playing && d.state.t>1) player.seekTo(d.state.t, true); }
-            else { pendingVideoId = d.state.videoId; pendingPlaying = !!d.state.playing; pendingT = d.state.t||0; }
+          if(d.state && d.state.media){
+            const m = d.state.media;
+            if(m.kind === 'yt' && !playerReady){ pendingMedia = {kind:'yt', id:m.id, playing:!!d.state.playing, t:d.state.t||0}; }
+            else { loadMedia(m, !!d.state.playing); if(d.state.playing && d.state.t>1) mediaSeekTo(d.state.t); }
           }
           break;
         case 'load':
-          if(playerReady){ loadVideo(d.videoId, true); }
-          else { pendingVideoId = d.videoId; pendingPlaying = true; pendingT = 0; }
+          if(d.media){
+            if(d.media.kind === 'yt' && !playerReady){ pendingMedia = {kind:'yt', id:d.media.id, playing:true, t:0}; }
+            else loadMedia(d.media, true);
+          }
           break;
-        case 'play': if(playerReady && videoId) player.playVideo(); break;
-        case 'pause': if(playerReady && videoId) player.pauseVideo(); break;
-        case 'seek': if(playerReady && videoId) player.seekTo(d.t, true); break;
+        case 'play': if(currentMedia) mediaPlay(); break;
+        case 'pause': if(currentMedia) mediaPause(); break;
+        case 'seek': if(currentMedia) mediaSeekTo(d.t); break;
         case 'tick':
-          if(playerReady && videoId && player.getPlayerState() === YT.PlayerState.PLAYING){
+          if(currentMedia && mediaIsPlaying()){
             const expected = d.t + (Date.now() - d.ts)/1000;
-            const cur = player.getCurrentTime();
-            if(Math.abs(cur - expected) > 1.5) player.seekTo(expected, true);
+            if(Math.abs(mediaCurTime() - expected) > 1.5) mediaSeekTo(expected);
           }
           break;
         case 'chat': addChat(d.name, d.text); break;
@@ -291,7 +376,6 @@ function becomeGuest(){
   });
   peer.on('error', err=>{
     if(err.type === 'peer-unavailable'){
-      // Хоста немає (він вийшов) — можемо стати хостом цієї кімнати
       if(peer) peer.destroy();
       sysMsg('Хоста немає в мережі — ти стаєш хостом цієї кімнати.');
       becomeHost();
@@ -344,10 +428,11 @@ function renderQueue(){
   if(!queue.length){ const li=document.createElement('li'); li.textContent='Черга порожня — додай відео 🍿'; li.style.cursor='default'; ul.appendChild(li); return; }
   queue.forEach((q,i)=>{
     const li = document.createElement('li');
-    const isNow = q.id === videoId;
+    const isNow = q.media && currentMedia && q.media.kind === currentMedia.kind &&
+      ((q.media.kind==='yt' && q.media.id === currentMedia.id) || (q.media.kind==='file' && q.media.src === currentMedia.src));
     if(isNow) li.className = 'now';
     li.innerHTML = '<span>'+(isNow?'▶ ':'')+esc(q.title || 'Відео')+'</span><span class="del" data-i="'+i+'">✕</span>';
-    li.onclick = ()=>{ if(role==='host' && !isNow){ loadVideo(q.id, true); send({type:'load', videoId:q.id}); } };
+    li.onclick = ()=>{ if(role==='host' && !isNow){ loadMedia(q.media, true); send({type:'load', media:q.media}); } };
     li.querySelector('.del').onclick = (e)=>{
       e.stopPropagation();
       if(role==='host'){ queue.splice(i,1); renderQueue(); broadcastQueue(); }
@@ -357,9 +442,13 @@ function renderQueue(){
   });
 }
 function nextInQueue(){
-  const cur = queue.findIndex(q => q.id === videoId);
+  if(!currentMedia) return;
+  const cur = queue.findIndex(q => q.media && (
+    (q.media.kind==='yt' && currentMedia.kind==='yt' && q.media.id === currentMedia.id) ||
+    (q.media.kind==='file' && currentMedia.kind==='file' && q.media.src === currentMedia.src)
+  ));
   const next = cur >= 0 ? cur+1 : 0;
-  if(queue[next]){ loadVideo(queue[next].id, true); send({type:'load', videoId:queue[next].id}); }
+  if(queue[next]){ loadMedia(queue[next].media, true); send({type:'load', media:queue[next].media}); }
 }
 
 /* ================= UI ================= */
@@ -370,21 +459,21 @@ document.getElementById('copyBtn').onclick = ()=>{
     .then(()=>toast('🔗 Лінк скопійовано: ' + url))
     .catch(()=>{ prompt('Скопіюй лінк:', url); });
 };
-function currentVideoId(){ return parseYT(document.getElementById('videoUrl').value); }
+function inputMedia(){ return parseMedia(document.getElementById('videoUrl').value); }
 document.getElementById('loadBtn').onclick = ()=>{
-  const id = currentVideoId();
-  if(!id){ toast('⚠️ Не розпізнав лінк. Треба YouTube (watch?v= або youtu.be)'); return; }
+  const m = inputMedia();
+  if(!m){ toast('⚠️ Не розпізнав посилання. Потрібен YouTube або .mp4/.m3u8'); return; }
   document.getElementById('videoUrl').value='';
-  if(role==='host'){ loadVideo(id, true); send({type:'load', videoId:id}); }
-  else { send({type:'load', videoId:id}); }
+  if(role==='host'){ loadMedia(m, true); send({type:'load', media:m}); }
+  else { send({type:'load', media:m}); }
 };
 document.getElementById('queueBtn').onclick = ()=>{
-  const id = currentVideoId();
-  if(!id){ toast('⚠️ Не розпізнав лінк. Треба YouTube (watch?v= або youtu.be)'); return; }
-  const title = (prompt('Назва для черги (необов\u2019язково):') || '').trim() || 'Відео';
+  const m = inputMedia();
+  if(!m){ toast('⚠️ Не розпізнав посилання. Потрібен YouTube або .mp4/.m3u8'); return; }
+  const title = (prompt('Назва для черги (необов\u2019язково):') || '').trim() || (m.title || 'Відео');
   document.getElementById('videoUrl').value='';
-  if(role==='host'){ queue.push({id, title, name:myName}); renderQueue(); broadcastQueue(); }
-  else { send({type:'queue_add', videoId:id, title, name:myName}); }
+  if(role==='host'){ queue.push({media:m, title, name:myName}); renderQueue(); broadcastQueue(); }
+  else { send({type:'queue_add', media:m, title, name:myName}); }
 };
 document.querySelectorAll('.emoji button').forEach(b=>{
   b.onclick = ()=>{ const e=b.dataset.e; send({type:'react', e}); spawnReact(e); };
