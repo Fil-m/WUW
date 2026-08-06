@@ -63,6 +63,14 @@
   .status b{color:var(--text)}
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);border:1px solid var(--border);border-radius:12px;padding:10px 18px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
   .toast.show{opacity:1}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:18px;width:100%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px}
+  .modal-box h3{margin:0}
+  #filmResults{overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:80px}
+  .fitem{background:rgba(0,0,0,.3);border-radius:10px;padding:10px 12px;cursor:pointer;border:1px solid transparent}
+  .fitem:hover{border-color:var(--accent)}
+  .fitem b{display:block;font-size:14px}
+  .fitem span{font-size:12px;color:var(--muted);word-break:break-all}
 </style>
 </head>
 <body>
@@ -85,6 +93,7 @@
           <input type="text" id="videoUrl" placeholder="YouTube або пряме посилання на .mp4/.m3u8" autocomplete="off">
           <button id="loadBtn">▶ Дивитись зараз</button>
           <button class="ghost" id="queueBtn">➕ У чергу</button>
+          <button class="ghost" id="filmBtn">🔎 Фільми</button>
         </div>
         <div class="pills" id="pills"><span class="pill">Учасники:</span></div>
         <div class="emoji">
@@ -107,6 +116,18 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h3>🔎 Пошук фільмів (Internet Archive)</h3>
+    <div class="row">
+      <input type="text" id="filmSearch" placeholder="Назва фільму (напр. Perdita Durango)" autocomplete="off">
+      <button id="filmSearchBtn">Шукати</button>
+    </div>
+    <div id="filmResults"><div class="fitem"><b>Безкоштовні фільми з відкритих архівів</b><span>Знайди фільм — і всі в кімнаті побачать його синхронно</span></div></div>
+    <button class="ghost" id="modalClose">Закрити</button>
+  </div>
+</div>
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
@@ -490,10 +511,69 @@ document.getElementById('videoUrl').addEventListener('keydown', e=>{
   if(e.key==='Enter') document.getElementById('loadBtn').click();
 });
 
+/* ================= Пошук фільмів (Internet Archive) ================= */
+const modal = document.getElementById('modal');
+document.getElementById('filmBtn').onclick = ()=>{ modal.style.display='flex'; document.getElementById('filmSearch').focus(); };
+document.getElementById('modalClose').onclick = ()=>{ modal.style.display='none'; };
+modal.addEventListener('click', e=>{ if(e.target === modal) modal.style.display='none'; });
+document.getElementById('filmSearchBtn').onclick = searchArchive;
+document.getElementById('filmSearch').addEventListener('keydown', e=>{ if(e.key==='Enter') searchArchive(); });
+
+async function searchArchive(){
+  const q = document.getElementById('filmSearch').value.trim();
+  if(!q) return;
+  const box = document.getElementById('filmResults');
+  box.innerHTML = '<div class="fitem"><b>Шукаємо…</b></div>';
+  try{
+    const url = 'https://archive.org/advancedsearch.php?q=' + encodeURIComponent('title:(' + q + ') AND mediatype:movies') + '&fl[]=identifier&fl[]=title&fl[]=year&rows=20&output=json';
+    const r = await fetch(url);
+    const j = await r.json();
+    const docs = (j.response && j.response.docs) || [];
+    if(!docs.length){ box.innerHTML = '<div class="fitem"><b>Нічого не знайдено 😕</b><span>Спробуй іншу назву (краще англійською)</span></div>'; return; }
+    box.innerHTML = '';
+    docs.forEach(d=>{
+      const el = document.createElement('div');
+      el.className = 'fitem';
+      el.innerHTML = '<b>'+esc(d.title || '?')+'</b><span>'+(d.year ? '('+esc(String(d.year))+') ' : '')+esc(d.identifier)+'</span>';
+      el.onclick = ()=>loadArchiveItem(d.identifier, d.title || 'Фільм');
+      box.appendChild(el);
+    });
+  }catch(e){
+    box.innerHTML = '<div class="fitem"><b>Помилка пошуку</b><span>'+esc(String(e))+'</span></div>';
+  }
+}
+
+async function loadArchiveItem(id, title){
+  const box = document.getElementById('filmResults');
+  box.innerHTML = '<div class="fitem"><b>Завантажуємо «'+esc(title)+'»…</b></div>';
+  try{
+    const r = await fetch('https://archive.org/metadata/' + encodeURIComponent(id));
+    const j = await r.json();
+    const files = (j.files || []).filter(f=>/\.mp4$/i.test(f.name || ''));
+    if(!files.length){ box.innerHTML = '<div class="fitem"><b>У цьому записі немає mp4</b><span>Спробуй інший результат</span></div>'; return; }
+    files.sort((a,b)=>parseInt(b.size||0,10) - parseInt(a.size||0,10));
+    const best = files[0];
+    const src = 'https://archive.org/download/' + encodeURIComponent(id) + '/' + best.name.split('/').map(encodeURIComponent).join('/');
+    const media = {kind:'file', src, title};
+    if(role==='host'){ loadMedia(media, true); send({type:'load', media}); }
+    else { send({type:'load', media}); }
+    modal.style.display = 'none';
+    toast('🎬 Дивимось: ' + title);
+  }catch(e){
+    box.innerHTML = '<div class="fitem"><b>Помилка</b><span>'+esc(String(e))+'</span></div>';
+  }
+}
+
 /* ================= Старт ================= */
 if(!HAD_HASH){ becomeHost(); }
 else if(WAS_HOST){ becomeHost(); }
 else { becomeGuest(); }
+
+/* Якщо в тій самій вкладці відкрили лінк іншої кімнати — перезавантажуємось */
+window.addEventListener('hashchange', ()=>{
+  const m = location.hash.match(/room=([A-Z0-9]+)/i);
+  if(m && m[1] !== ROOM) location.reload();
+});
 </script>
 </body>
 </html>
