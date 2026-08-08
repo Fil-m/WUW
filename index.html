@@ -33,6 +33,7 @@
   .stage{position:relative;aspect-ratio:16/9;background:#000;border-radius:14px;overflow:hidden}
   #player{position:absolute;inset:0;width:100%;height:100%;display:none}
   #vplayer{position:absolute;inset:0;width:100%;height:100%;display:none;background:#000}
+  #embedFrame{position:absolute;inset:0;width:100%;height:100%;display:none;border:0;background:#000}
   .stage .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:var(--muted);font-size:15px;line-height:1.6;z-index:2;background:radial-gradient(circle at 50% 40%,#14102b,#000 75%)}
   .reacts{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3}
   .react{position:absolute;font-size:34px;animation:float 1.6s ease-out forwards}
@@ -86,7 +87,8 @@
         <div class="stage">
           <div id="player"></div>
           <video id="vplayer" playsinline></video>
-          <div class="msg" id="playerMsg">🔗 Встав посилання нижче<br>YouTube або пряме відео (.mp4 / .m3u8) — друзі підхоплять автоматично</div>
+          <iframe id="embedFrame" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture" referrerpolicy="unsafe-url" title="embedded"></iframe>
+          <div class="msg" id="playerMsg">🔗 Встав посилання нижче<br>YouTube, TikTok або пряме відео (.mp4 / .m3u8) — друзі підхоплять автоматично</div>
           <div class="reacts" id="reacts"></div>
         </div>
         <div class="row">
@@ -155,6 +157,7 @@ let playing = false, queue = [], tickTimer = null;
 let pendingMedia = null;      // {kind, id, src, title, playing, t}
 
 const vPlayerEl = document.getElementById('vplayer');
+const embedFrame = document.getElementById('embedFrame');
 
 /* ================= Допоміжне ================= */
 function genCode(){ let s=''; const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; for(let i=0;i<5;i++) s+=A[Math.floor(Math.random()*A.length)]; return s; }
@@ -179,6 +182,9 @@ function parseMedia(url){
   const s = String(url).trim();
   const yt = s.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
   if(yt) return {kind:'yt', id:yt[1]};
+  if(/tiktok\.com/i.test(s) && !/\.(mp4|webm|ogg|ogv|m4v)(\?|#|$)/i.test(s) && !s.includes('.m3u8')){
+    return {kind:'tiktok', url:s};
+  }
   if(/\.(mp4|webm|ogg|ogv|m4v)(\?|#|$)/i.test(s) || s.includes('.m3u8')){
     const title = decodeURIComponent(s.split('/').pop().split(/[?#]/)[0] || 'Відео').replace(/\.[^.]+$/, '') || 'Відео';
     return {kind:'file', src:s, title:title.slice(0,60)};
@@ -189,8 +195,10 @@ function parseMedia(url){
 /* ================= Медіа-абстракція ================= */
 function showPlayer(kind){
   document.getElementById('playerMsg').style.display = 'none';
-  if(kind === 'yt'){ document.getElementById('player').style.display = 'block'; vPlayerEl.style.display = 'none'; }
-  else if(kind === 'file'){ document.getElementById('player').style.display = 'none'; vPlayerEl.style.display = 'block'; }
+  document.getElementById('player').style.display = (kind === 'yt') ? 'block' : 'none';
+  vPlayerEl.style.display = (kind === 'file') ? 'block' : 'none';
+  embedFrame.style.display = (kind === 'tiktok') ? 'block' : 'none';
+  if(kind !== 'tiktok') embedFrame.removeAttribute('src');
 }
 function resetFilePlayer(){
   if(hls){ try{ hls.destroy(); }catch(e){} hls = null; }
@@ -232,7 +240,7 @@ function loadMedia(media, autoplay){
     showPlayer('yt');
     resetFilePlayer();
     if(playerReady){ player.loadVideoById({videoId:media.id, startSeconds:0}); if(!autoplay) player.pauseVideo(); }
-  } else {
+  } else if(media.kind === 'file'){
     mediaMode = 'file';
     showPlayer('file');
     destroyFileHls();
@@ -245,8 +253,32 @@ function loadMedia(media, autoplay){
     }
     vPlayerEl.load();
     if(autoplay) mediaPlay();
+  } else if(media.kind === 'tiktok'){
+    mediaMode = 'tiktok';
+    showPlayer('tiktok');
+    loadTikTok(media);
   }
   renderQueue();
+}
+
+/* TikTok через офіційний oEmbed (CORS дозволений TikTok-ом) */
+function loadTikTok(media){
+  embedFrame.removeAttribute('src');
+  fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(media.url))
+    .then(r => { if(!r.ok) throw new Error('oEmbed ' + r.status); return r.json(); })
+    .then(j => {
+      const vid = j.embed_product_id || (j.html && j.html.match(/data-video-id="(\d+)"/) || [])[1] || (media.url.match(/(?:video|photo)\/(\d+)/) || [])[1];
+      if(!vid){ toast('⚠️ TikTok не віддав embed для цього поста'); return; }
+      embedFrame.src = 'https://www.tiktok.com/embed/v2/' + vid;
+      if(!currentMedia.title) currentMedia.title = (j.title || 'TikTok').slice(0,60);
+    })
+    .catch(e => {
+      if(embedFrame.getAttribute('src')) return;
+      const vid = (media.url.match(/(?:video|photo)\/(\d+)/) || [])[1];
+      if(vid){ embedFrame.src = 'https://www.tiktok.com/embed/v2/' + vid; return; }
+      toast('⚠️ Не вдалося завантажити TikTok. Встав повне посилання на відео (відкрий його в TikTok і скопіюй з адресного рядка — короткі vt.tiktok.com лінки не підтримуються)');
+      console.warn('tiktok oembed err', e);
+    });
 }
 function applyPending(){
   if(!pendingMedia) return;
